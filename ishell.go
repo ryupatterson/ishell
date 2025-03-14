@@ -275,6 +275,7 @@ func (s *Shell) handleCommand(str []string) (bool, error) {
 		s.Println(cmd.HelpText())
 		return true, nil
 	}
+
 	c := newContext(s, cmd, args)
 	cmd.Func(c)
 	return true, c.err
@@ -659,15 +660,18 @@ func (s *Shell) ProgressBar() ProgressBar {
 	return s.progressBar
 }
 
-func newContext(s *Shell, cmd *Cmd, args []string) *Context {
+func newContext(s *Shell, cmd *Cmd, args []string,) *Context {
 	if cmd == nil {
 		cmd = &Cmd{}
 	}
-	return &Context{
+
+	parsed, err := cmd.ParseArgs(args)
+	ret := Context{
 		Actions:     s.Actions,
 		progressBar: copyShellProgressBar(s),
 		Args:        args,
 		RawArgs:     s.rawArgs,
+		ParsedArgs: parsed,
 		Cmd:         *cmd,
 		contextValues: func() contextValues {
 			values := contextValues{}
@@ -677,6 +681,10 @@ func newContext(s *Shell, cmd *Cmd, args []string) *Context {
 			return values
 		}(),
 	}
+	if err != nil  {
+		ret.err = err
+	}
+	return &ret
 }
 
 func copyShellProgressBar(s *Shell) ProgressBar {

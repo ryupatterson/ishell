@@ -13,7 +13,7 @@ type Context struct {
 	RawArgs []string
 
 	// Parsed Args is command arguments with proper types
-	ParsedArgs []*ParsedArg
+	ParsedArgs []ParsedArg
 
 	// Cmd is the currently executing command. This is empty for NotFound and Interrupt.
 	Cmd Cmd

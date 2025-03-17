@@ -4,40 +4,38 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
-	"text/tabwriter"
 	"strconv"
+	"strings"
+	"regexp"
+	"text/tabwriter"
 )
 
 type ArgType int
 
 const (
-	INT      ArgType = 0
-	STRING   ArgType = 1
-	BOOL     ArgType = 2
+	IntType ArgType = 0
+	StringType  ArgType = 1
+	BoolType    ArgType = 2
 )
 
-type Argument[T any] struct {
-	Arg T
-}
-
 type CmdArg struct {
-	// short flag, such as '-p'
-	Flag string
-	// long flag, i.e. accessed by '--process'
-	// can be nil
-	LongFlag string
+	// short flag, such as 'p'
+	flag string
+	// long flag, i.e. accessed by 'process'
+	// acts as the key in the args map in a cmd
+	longFlag string
 	// the type of the argument
-	Typ ArgType
+	typ ArgType
 	// whether there can be multiple of these arguments
-	CanHaveMultiple bool
+	canHaveMultiple bool
 	// whether this is required
-	Required bool
+	required bool
 }
 
 type ParsedArg struct {
-	Key    string 
-	Typ    ArgType
-	Value  string
+	Key   string
+	Typ   ArgType
+	Value string
 }
 
 // Cmd is a shell command handler.
@@ -75,6 +73,33 @@ type Cmd struct {
 	args map[string]*CmdArg
 }
 
+func NewCmdArg(flag string, longFlag string, typ ArgType, 
+	canHaveMultiple bool, required bool) (*CmdArg, error) {
+	var ret *CmdArg
+	if !(len(flag) == 1 && regexp.MustCompile(`^[a-zA-Z0-9]$`).MatchString(flag)) {
+		return ret, fmt.Errorf("Flag '%s' is not a valid parameter", flag)
+	}
+
+	if !(len(longFlag) > 1 && regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]+$`).MatchString(longFlag)) {
+		return ret, fmt.Errorf("LongFlag '%s' is not a valid parameter", longFlag)
+	}
+
+	// not a valid ArgType
+	if typ < 0 || typ > 2 {
+		return ret, fmt.Errorf("Typ '%d' is not a valid parameter. Please use values IntType, StringType, or BoolType", typ)
+	}
+
+	ret = &CmdArg{
+		flag: flag,
+		longFlag: longFlag,
+		typ: typ,
+		canHaveMultiple: canHaveMultiple,
+		required: required,
+	}
+
+	return ret, nil
+}
+
 // AddCmd adds cmd as a subcommand.
 func (c *Cmd) AddCmd(cmd *Cmd) {
 	if c.children == nil {
@@ -86,6 +111,13 @@ func (c *Cmd) AddCmd(cmd *Cmd) {
 // DeleteCmd deletes cmd from subcommands.
 func (c *Cmd) DeleteCmd(name string) {
 	delete(c.children, name)
+}
+
+func (c *Cmd) AddCmdArg(arg *CmdArg) {
+	if c.args == nil {
+		c.args = make(map[string]*CmdArg)
+	}
+	c.args[arg.longFlag] = arg
 }
 
 // Children returns the subcommands of c.
@@ -176,25 +208,27 @@ func is_long_arg(str string) bool {
 }
 
 // Check to see if the string is a short argument param
+// didn't check to see if the second char is "-"
 func is_short_arg(str string) bool {
 	return len(str) > 1 && str[:1] == "-"
 }
 
 /*
-Returns the key if arg matches either a Flag or LongFlag in the command's 'args' 
+Returns the key if arg matches either a Flag or LongFlag in the command's 'args'
 parameter.
 */
 func (c Cmd) find_arg(arg string) string {
 	key := ""
 	is_long := is_long_arg(arg)
-	if ! (is_long && is_short_arg(arg)) {
+	if !(is_long != is_short_arg(arg)) {
 		return key
 	}
 
 	for i, argument := range c.args {
-		if is_long && argument.LongFlag == arg {
+		cleaned := strings.Replace(arg, "-", "", -1)
+		if is_long && argument.longFlag == cleaned {
 			return i
-		} else if argument.Flag == arg {
+		} else if argument.flag == cleaned {
 			return i
 		}
 	}
@@ -206,7 +240,7 @@ func (c Cmd) find_positional(arg string) string {
 	key := ""
 	for i, argument := range c.args {
 		// is positional
-		if argument.Flag == "" && argument.LongFlag == "" {
+		if argument.flag == "" && argument.longFlag == "" {
 			return i
 		}
 	}
@@ -215,15 +249,15 @@ func (c Cmd) find_positional(arg string) string {
 
 // Do an initial pass to split up arguments that can be put together
 func (c Cmd) initial_pass(args []string) []string {
-	ret := make([]string, len(args))
+	ret := make([]string, 0)
 
 	for _, arg := range args {
-		if is_short_arg(arg) && len(arg) > 2 {
+		if is_short_arg(arg) && !is_long_arg(arg) && len(arg) > 2 {
 			without_dash := arg[1:]
 			for _, char := range without_dash {
-				ret = append(ret, "-" + string(char))
+				ret = append(ret, "-"+string(char))
 			}
-		}  else {
+		} else {
 			ret = append(ret, arg)
 		}
 	}
@@ -233,26 +267,39 @@ func (c Cmd) initial_pass(args []string) []string {
 // checks to see if an integer argument is a valid integer
 func validate_int(value string) bool {
 	_, err := strconv.Atoi(value)
-	return err == nil 
+	return err == nil
 }
 
 // validates the arguments to make sure there are no repeats that aren't allowed, or if every
 // required argument exists
-func (c Cmd) validate_args(parsed []*ParsedArg) error {
-	count := make(map[string]int, len(parsed))
+func (c Cmd) validate_args(parsed []ParsedArg) error {
+	count := make(map[string]int)
 
+	// make a count dict, but also check to make sure
+	// every arg that needs a value has one
 	for _, arg := range parsed {
-		count[arg.Key] += 1
+		if (arg.Typ == IntType || arg.Typ == StringType) &&
+			arg.Value == "" {
+				fmt.Println(arg)
+			return fmt.Errorf("%s is missing an argument", arg.Key)
+		}
+		val, exists := count[arg.Key]
+		if !exists {
+			count[arg.Key] = 1
+		} else {
+			count[arg.Key] = val + 1
+		}
 	}
 
 	// iterate through every argument given with the command and check the count
 	// that each arg has in the counter. validate that the required commands exist,
 	// and that there aren't any arguments that shouldnt have multiples.
 	for key, arg := range c.args {
-		if arg.Required && ! (count[key] > 0) {
+		val, exists := count[key]
+		if arg.required && !exists {
 			return fmt.Errorf("%s is a required argument", key)
 		}
-		if ! arg.CanHaveMultiple && count[key] > 1 {
+		if !arg.canHaveMultiple && val > 1 {
 			return fmt.Errorf("There cannot be multiple instances of %s", key)
 		}
 	}
@@ -260,12 +307,11 @@ func (c Cmd) validate_args(parsed []*ParsedArg) error {
 }
 
 // Parses args, returns keys to the values
-func (c Cmd) ParseArgs(args []string) ([]*ParsedArg, error) {
-	ret := make([]*ParsedArg, len(args))
+func (c Cmd) ParseArgs(args []string) ([]ParsedArg, error) {
+	ret := make([]ParsedArg, 0)
 	further_split := c.initial_pass(args)
 
-	var temp_arg *ParsedArg
-
+	var temp_arg ParsedArg
 	// once an arg is found, set awaiting_value to true
 	awaiting_value := false
 	for _, arg := range further_split {
@@ -273,38 +319,40 @@ func (c Cmd) ParseArgs(args []string) ([]*ParsedArg, error) {
 
 		// found a matching arg!
 		if key != "" {
-			temp_arg = &ParsedArg{
+			temp_arg = ParsedArg{
 				Key: key,
-				Typ: c.args[key].Typ,
+				Typ: c.args[key].typ,
 			}
-			if c.args[key].Typ != BOOL {
+			if c.args[key].typ != BoolType {
 				awaiting_value = true
+			} else {
+				ret = append(ret, temp_arg)
 			}
 			continue
 		}
 
 		// didn't find the arg, if awaiting_value is true then this value is parsed_arg.
 		if key == "" && awaiting_value {
-			if temp_arg.Typ == INT && ! validate_int(arg) {
+			if temp_arg.Typ == IntType && !validate_int(arg) {
 				return ret, fmt.Errorf("String %s is not a valid integer for argument '%s'", arg, temp_arg.Key)
 			}
 			temp_arg.Value = arg
 			ret = append(ret, temp_arg)
 			awaiting_value = false
 			continue
-		} 
+		}
 
 		// awaiting_value == false, so look for positional argument
 		key = c.find_positional(arg)
 
 		// there's a positional argument that can fit this value!
 		if key != "" {
-			temp_arg = &ParsedArg{
-				Key: key,
-				Typ: c.args[key].Typ,
+			temp_arg = ParsedArg{
+				Key:   key,
+				Typ:   c.args[key].typ,
 				Value: arg,
 			}
-			if temp_arg.Typ == INT && ! validate_int(arg) {
+			if temp_arg.Typ == IntType && !validate_int(arg) {
 				return ret, fmt.Errorf("String %s is not a valid integer for argument '%s'", arg, temp_arg.Key)
 			}
 			ret = append(ret, temp_arg)
@@ -312,8 +360,13 @@ func (c Cmd) ParseArgs(args []string) ([]*ParsedArg, error) {
 			return ret, fmt.Errorf("Invalid argument %s", arg)
 		}
 	}
+
+	if awaiting_value {
+		return ret, fmt.Errorf("There is a parameter missing a value")
+	}
+
 	err := c.validate_args(ret)
-	
+
 	return ret, err
 }
 

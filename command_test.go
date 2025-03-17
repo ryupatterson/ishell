@@ -1,8 +1,8 @@
 package ishell_test
 
 import (
+	"fmt"
 	"testing"
-
 	"github.com/ryupatterson/ishell"
 	"github.com/stretchr/testify/assert"
 )
@@ -93,4 +93,92 @@ func TestChildrenSortedAlphabetically(t *testing.T) {
 	children := cmd.Children()
 	assert.Equal(t, children[0].Name, "child1", "must be first")
 	assert.Equal(t, children[1].Name, "child2", "must be second")
+}
+
+// test creation of new cmd args
+func TestCmdArgs(t *testing.T) {
+	_, err := ishell.NewCmdArg("x", "test-1", ishell.IntType, false, true)
+	assert.NoError(t, err, "Error must be nil")
+
+	// test flag param
+	_, err = ishell.NewCmdArg(".", "test_2", ishell.BoolType, false, false)
+	assert.Error(t, err, "Flag parameter must error")
+
+	// test longflag
+	_, err = ishell.NewCmdArg("x", "-test2", ishell.BoolType, false, false)
+	assert.Error(t, err, "Longflag first char - test must err")
+
+	_, err = ishell.NewCmdArg("x", "test.2", ishell.BoolType, false, false)
+	assert.Error(t, err, "Longflag illegal char, test must err")
+
+	// test typ param
+	_, err = ishell.NewCmdArg("x", "test_3", 3, false, false)
+	assert.Error(t, err, "Illegal typ value, test must err")
+}
+
+func TestCmdArgsParsing(t *testing.T) {
+	arg1_flag := "x"
+	arg1_key  := "test1"
+	arg1_type := ishell.IntType
+	arg1, _ := ishell.NewCmdArg(arg1_flag, arg1_key, arg1_type, false, true)
+
+	arg2_flag := "y"
+	arg2_key  := "test2"
+	arg2_type := ishell.BoolType
+	arg2, _ := ishell.NewCmdArg(arg2_flag, arg2_key, arg2_type, false, false)
+
+	arg3_flag := "z"
+	arg3_key  := "test3"
+	arg3_type := ishell.StringType
+	arg3, _ := ishell.NewCmdArg(arg3_flag, arg3_key, arg3_type, true, false)
+
+	cmd := ishell.Cmd{
+		Name: "root",
+		Help: "root help",
+		Func: nil,
+	}
+	cmd.AddCmdArg(arg1)
+	cmd.AddCmdArg(arg2)
+	cmd.AddCmdArg(arg3)
+
+	// test 1
+	// basic case
+	ex1 := []string{"-x", "1"}
+	parsed1, err := cmd.ParseArgs(ex1)
+	assert.NoError(t, err, "CmdArgsParsing:Test1 should not error")
+	assert.Equal(t, 1, len(parsed1), "CmdArgsParsing:Test1 should have 1 argument")
+	// check param x
+	assert.Equal(t, arg1_key, parsed1[0].Key, fmt.Sprintf("CmdArgsParsing:Test1 Key %s != %s", arg1_key, parsed1[0].Key))
+	assert.Equal(t, arg1_type, parsed1[0].Typ, fmt.Sprintf("CmdArgsParsing:Test1 Typ %d != %d", arg1_type, parsed1[0].Typ))
+	assert.Equal(t, "1", parsed1[0].Value, fmt.Sprintf("CmdArgsParsing:Test1 Value %s != %s", "1", parsed1[0].Value))
+
+	// test 2
+	// checking case where there is a boolean flag that is combined with a flag that takes a value, i.e. -yz
+	ex2 := []string{"-x", "1", "-yz", "test"}
+	parsed2, err := cmd.ParseArgs(ex2)
+	assert.NoError(t, err, "CmdArgsParsing:Test2 should not error")
+	assert.Equal(t, 3, len(parsed2), "CmdArgsParsing:Test2 should have 3 arguments")
+	// check param x
+	assert.Equal(t, arg1_key, parsed2[0].Key, fmt.Sprintf("CmdArgsParsing:Test2 Key %s != %s", arg1_key, parsed2[0].Key))
+	assert.Equal(t, arg1_type, parsed2[0].Typ, fmt.Sprintf("CmdArgsParsing:Test2 Typ %d != %d", arg1_type, parsed2[0].Typ))
+	assert.Equal(t, "1", parsed2[0].Value, fmt.Sprintf("CmdArgsParsing:Test2 Value %s != %s", "1", parsed2[0].Value))
+	// check param y
+	assert.Equal(t, arg2_key, parsed2[1].Key, fmt.Sprintf("CmdArgsParsing:Test2 Key %s != %s", arg2_key, parsed2[1].Key))
+	assert.Equal(t, arg2_type, parsed2[1].Typ, fmt.Sprintf("CmdArgsParsing:Test2 Typ %d != %d", arg2_type, parsed2[1].Typ))
+	// check param z
+	assert.Equal(t, arg3_key, parsed2[2].Key, fmt.Sprintf("CmdArgsParsing:Test2 Key %s != %s", arg3_key, parsed2[2].Key))
+	assert.Equal(t, arg3_type, parsed2[2].Typ, fmt.Sprintf("CmdArgsParsing:Test2 Typ %d != %d", arg3_type, parsed2[2].Typ))
+	assert.Equal(t, "test", parsed2[2].Value, fmt.Sprintf("CmdArgsParsing:Test2 Value %s != %s", "test", parsed2[2].Value))
+
+	// test 3
+	// checking case where a required arg is missing
+	ex3 := []string{"-yz", "test"}
+	_, err = cmd.ParseArgs(ex3)
+	assert.Error(t, err, "CmdArgsParsing:Test3 should error due to a missing required arg")
+
+	// test 4
+	// checking case where param z is missing its value
+	ex4 := []string{"-x", "1","-yz"}
+	_, err = cmd.ParseArgs(ex4)
+	assert.Error(t, err, "Process should error due to a missing required arg")
 }

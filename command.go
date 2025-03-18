@@ -326,6 +326,11 @@ func (c Cmd) validate_args(arg_mask []int, parsed []ParsedArg) error {
 // Parses args, returns keys to the values
 func (c Cmd) ParseArgs(args []string) ([]ParsedArg, error) {
 	ret := make([]ParsedArg, 0)
+
+	if len(args) == 0 {
+		return nil, nil
+	}
+
 	further_split := c.initial_pass(args)
 
 	// checking so see which args currently exist for positionals

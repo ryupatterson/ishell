@@ -239,7 +239,7 @@ func handleInput(s *Shell, line []string) error {
 	if s.generic == nil {
 		return errNoHandler
 	}
-	c := newContext(s, nil, line)
+	c := newContext(s, nil, line, nil)
 	s.generic(c)
 	return c.err
 }
@@ -248,14 +248,14 @@ func handleInterrupt(s *Shell, line []string) error {
 	if s.interrupt == nil {
 		return errNoInterruptHandler
 	}
-	c := newContext(s, nil, line)
+	c := newContext(s, nil, line, nil)
 	s.interruptCount++
 	s.interrupt(c, s.interruptCount, strings.Join(line, " "))
 	return c.err
 }
 
 func handleEOF(s *Shell) error {
-	c := newContext(s, nil, nil)
+	c := newContext(s, nil, nil, nil)
 	s.eof(c)
 	return c.err
 }
@@ -276,7 +276,12 @@ func (s *Shell) handleCommand(str []string) (bool, error) {
 		return true, nil
 	}
 
-	c := newContext(s, cmd, args)
+	parsed, err := cmd.ParseArgs(args)
+	if err != nil {
+		return false, err
+	}
+
+	c := newContext(s, cmd, args, parsed)
 	cmd.Func(c)
 	return true, c.err
 }
@@ -660,18 +665,17 @@ func (s *Shell) ProgressBar() ProgressBar {
 	return s.progressBar
 }
 
-func newContext(s *Shell, cmd *Cmd, args []string,) *Context {
+func newContext(s *Shell, cmd *Cmd, args []string, parsed_args []ParsedArg) *Context {
 	if cmd == nil {
 		cmd = &Cmd{}
 	}
 
-	parsed, err := cmd.ParseArgs(args)
 	ret := Context{
 		Actions:     s.Actions,
 		progressBar: copyShellProgressBar(s),
 		Args:        args,
 		RawArgs:     s.rawArgs,
-		ParsedArgs: parsed,
+		ParsedArgs: parsed_args,
 		Cmd:         *cmd,
 		contextValues: func() contextValues {
 			values := contextValues{}
@@ -681,9 +685,7 @@ func newContext(s *Shell, cmd *Cmd, args []string,) *Context {
 			return values
 		}(),
 	}
-	if err != nil  {
-		ret.err = err
-	}
+
 	return &ret
 }
 
